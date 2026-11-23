@@ -80,7 +80,7 @@ def main():
     cli.add_argument("--chapter", type=int, default=0, help="رقم المدخل في الفهرس")
     cli.add_argument("--minutes", type=int, default=25)
     cli.add_argument("--voice", help="معرّف صوت Edge الاحتياطي")
-    cli.add_argument("--tts", choices=("edge", "piper", "espeak", "silma", "audar"))
+    cli.add_argument("--tts", choices=("edge", "piper", "espeak", "silma", "audar", "heygen"))
     cli.add_argument("--rate", choices=("-20%", "-10%", "0%", "+10%"), default="-10%")
     cli.add_argument("--aspect", choices=("16:9", "9:16"), default="16:9")
     cli.add_argument("--resolution", type=int, choices=(720, 1080), default=1080)
@@ -90,6 +90,8 @@ def main():
         cli.error("اختر محرك التعليق الصوتي عبر --tts قبل التوليد.")
     if args.tts == "edge":
         args.voice = args.voice or "ar-JO-TaimNeural"
+    elif args.tts == "heygen":
+        args.voice = "Fouad"
     else:
         args.voice = "ar" if args.tts == "espeak" else args.tts
     args.out.mkdir(parents=True, exist_ok=True)
