@@ -1,0 +1,4 @@
+PyMuPDF>=1.26,<1.28
+Pillow>=11,<14
+edge-tts>=7.2,<8
+num2words==0.5.14
