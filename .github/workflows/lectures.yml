@@ -1,0 +1,156 @@
+name: إنشاء محاضرات من PDF
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: وسم إصدار PDF (مثال book-01)
+        required: true
+        type: string
+      operation:
+        description: المرحلة
+        type: choice
+        options: [analyze, generate]
+        default: generate
+      mode:
+        description: وضع الشرح
+        type: choice
+        options: [reading, local, custom]
+        default: reading
+      level:
+        description: مستوى الشرح التحليلي
+        type: choice
+        options: [university, simple, exam]
+        default: university
+      range:
+        description: نطاق 1-25 أو فصل c2 أو all
+        default: all
+        type: string
+      voice:
+        description: محرك الصوت (يلزم الاختيار للتوليد)
+        type: choice
+        options: [choose, silma, audar, edge-backup, espeak-ar]
+        default: choose
+      minutes:
+        description: المدة التقديرية للمحاضرة بالدقائق
+        default: '25'
+        type: string
+      format:
+        description: الأبعاد والدقة
+        type: choice
+        options: ['16:9 1080', '9:16 1080', '16:9 720', '9:16 720']
+        default: '16:9 1080'
+      captions:
+        description: إضافة ترجمة عربية قابلة للتشغيل
+        type: boolean
+        default: true
+      resume:
+        description: رقم التشغيل السابق للاستئناف (اختياري)
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  studio:
+    if: github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: تثبيت أدوات القراءة والتصيير
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng fonts-noto-core espeak-ng
+          python -m pip install -r requirements.txt
+      - name: تجهيز محرك الصوت المختار
+        if: inputs.operation == 'generate'
+        env:
+          VOICE: ${{ inputs.voice }}
+          HF_HUB_DISABLE_XET: '1'
+        run: |
+          case "$VOICE" in
+            silma|audar) bash scripts/install-narration.sh "$VOICE" ;;
+            edge-backup|espeak-ar) ;;
+            *) echo "اختر محركاً صوتياً قبل بدء التوليد." ; exit 1 ;;
+          esac
+      - name: تحميل الملف من الإصدار الخاص
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          [[ "$RELEASE" =~ ^book-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+          gh release download --pattern source.pdf --output source.pdf -- "$RELEASE"
+      - name: التحقق من رقم التشغيل السابق
+        if: inputs.resume != ''
+        env:
+          RESUME: ${{ inputs.resume }}
+        run: |
+          [[ "$RESUME" =~ ^[0-9]+$ ]]
+      - uses: actions/download-artifact@v4
+        if: inputs.resume != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume }}
+          name: lectures
+          path: output
+      - name: تجهيز النموذج المحلي Qwen
+        if: inputs.operation == 'generate' && inputs.mode == 'local'
+        timeout-minutes: 12
+        run: bash scripts/start-ollama.sh
+      - name: استخراج وتحليل وتوليد
+        env:
+          OPERATION: ${{ inputs.operation }}
+          MODE: ${{ inputs.mode }}
+          LEVEL: ${{ inputs.level }}
+          RANGE: ${{ inputs.range }}
+          VOICE: ${{ inputs.voice }}
+          EDGE_VOICE: ${{ vars.LECTURE_EDGE_VOICE || 'ar-JO-TaimNeural' }}
+          HF_TOKEN: ${{ inputs.voice == 'audar' && secrets.LECTURE_HF_TOKEN || '' }}
+          HF_HUB_DISABLE_XET: '1'
+          MINUTES: ${{ inputs.minutes }}
+          FORMAT: ${{ inputs.format }}
+          CAPTIONS: ${{ inputs.captions }}
+          LECTURE_AI_URL: ${{ vars.LECTURE_AI_URL }}
+          LECTURE_AI_MODEL: ${{ vars.LECTURE_AI_MODEL }}
+          LECTURE_AI_KEY: ${{ secrets.LECTURE_AI_KEY }}
+        run: |
+          read -r aspect resolution <<< "$FORMAT"
+          args=(--provider "$MODE" --level "$LEVEL" --minutes "$MINUTES" --aspect "$aspect" --resolution "$resolution")
+          case "$VOICE" in
+            silma|audar) args+=(--tts "$VOICE" --voice "$VOICE") ;;
+            espeak-ar) args+=(--tts espeak --voice ar) ;;
+            edge-backup) args+=(--tts edge --voice "$EDGE_VOICE") ;;
+          esac
+          if [[ "$CAPTIONS" != true ]]; then args+=(--no-captions); fi
+          if [[ "$OPERATION" == analyze ]]; then args+=(--analyze); fi
+          if [[ "$RANGE" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            args+=(--first "${BASH_REMATCH[1]}" --last "${BASH_REMATCH[2]}")
+          elif [[ "$RANGE" =~ ^c([0-9]+)$ ]]; then
+            args+=(--chapter "${BASH_REMATCH[1]}")
+          elif [[ "$RANGE" != all ]]; then
+            echo "استخدم all أو نطاقاً مثل 1-25 أو فصلاً مثل c2."
+            exit 1
+          fi
+          timeout --kill-after=15s 320m python -m lecture_studio source.pdf "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lectures
+          path: |
+            output/
+            !output/**/.render/pending.mp4
+            !output/**/.render/final.mp4
+            !output/**/.render/temporary.*
+            !output/**/.render/raw-narration.wav
+          include-hidden-files: true
+          retention-days: 7
+          compression-level: 0

@@ -1,0 +1,64 @@
+name: مقارنة محركات التعليق الصوتي
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/narration-quality.yml'
+      - 'lecture_studio/**'
+      - 'scripts/*narration*'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: narration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [silma, audar, edge]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 27
+    env:
+      ENGINE: ${{ matrix.engine }}
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_DISABLE_PROGRESS_BARS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: تجهيز المحرك على معالج CPU
+        run: |
+          mkdir -p "output/$ENGINE"
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core time
+          python -m pip install -r requirements.txt
+          /usr/bin/time -v -o "output/$ENGINE/install.txt" bash scripts/install-narration.sh "$ENGINE"
+      - name: إنتاج عينة MP3 وفيديو بنفس الصوت
+        env:
+          HF_TOKEN: ${{ matrix.engine == 'audar' && secrets.LECTURE_HF_TOKEN || '' }}
+        run: |
+          timeout --kill-after=10s 15m python -m scripts.benchmark_narration "$ENGINE" "output/$ENGINE"
+      - name: فحص وضوح المصطلحات تلقائياً
+        if: hashFiles(format('output/{0}/{0}.mp3', matrix.engine)) != ''
+        continue-on-error: true
+        run: |
+          python -m pip install faster-whisper==1.2.1
+          timeout --kill-after=10s 4m python -m scripts.check_narration "output/$ENGINE/$ENGINE.mp3"
+      - name: رفع العينات والقياسات
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: narration-${{ matrix.engine }}
+          path: output/${{ matrix.engine }}/
+          retention-days: 14

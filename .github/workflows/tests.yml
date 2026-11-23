@@ -1,0 +1,53 @@
+name: اختبارات الاستوديو
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng fonts-noto-core espeak-ng
+          python -m pip install -r requirements-test.txt
+          python -m pytest -q
+      - name: إنتاج عينة تعليمية بصوت عربي
+        run: |
+          python -m tests.make_sample sample.pdf
+          timeout --kill-after=5s 120s python -m lecture_studio sample.pdf --out output/demo --tts edge
+          ffprobe -v error -show_entries stream=codec_name,codec_type -of csv output/demo/lecture-001/lecture.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arabic-demo
+          path: output/demo/
+          retention-days: 7
+      - name: تجربة الشرح التحليلي بنموذج Qwen المحلي
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          if timeout 480s bash scripts/start-ollama.sh &&
+             timeout --kill-after=5s 480s python -m lecture_studio sample.pdf --out output/analytic --provider local --first 1 --last 1 --tts edge --resolution 720; then
+            echo "تم تصيير المحاضرة التحليلية باستخدام Qwen المحلي." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "لم يكتمل اختبار Qwen المحلي. راجع سبب الفشل في سجل الخطوة." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('output/analytic/lecture-001/lecture.mp4') != ''
+        with:
+          name: arabic-analytic-demo
+          path: output/analytic/
+          retention-days: 7
