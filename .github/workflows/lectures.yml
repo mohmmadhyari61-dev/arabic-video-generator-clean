@@ -29,7 +29,7 @@ on:
       voice:
         description: محرك الصوت (يلزم الاختيار للتوليد)
         type: choice
-        options: [choose, silma, audar, edge-backup, espeak-ar]
+        options: [choose, silma, audar, edge-backup, espeak-ar, heygen-fouad]
         default: choose
       minutes:
         description: المدة التقديرية للمحاضرة بالدقائق
@@ -79,6 +79,7 @@ jobs:
         run: |
           case "$VOICE" in
             silma|audar) bash scripts/install-narration.sh "$VOICE" ;;
+            heygen-fouad) ;;
             edge-backup|espeak-ar) ;;
             *) echo "اختر محركاً صوتياً قبل بدء التوليد." ; exit 1 ;;
           esac
@@ -122,12 +123,14 @@ jobs:
           LECTURE_AI_URL: ${{ vars.LECTURE_AI_URL }}
           LECTURE_AI_MODEL: ${{ vars.LECTURE_AI_MODEL }}
           LECTURE_AI_KEY: ${{ secrets.LECTURE_AI_KEY }}
+          LECTURE_HEYGEN_API_KEY: ${{ secrets.LECTURE_HEYGEN_API_KEY }}
         run: |
           read -r aspect resolution <<< "$FORMAT"
           args=(--provider "$MODE" --level "$LEVEL" --minutes "$MINUTES" --aspect "$aspect" --resolution "$resolution")
           case "$VOICE" in
             silma|audar) args+=(--tts "$VOICE" --voice "$VOICE") ;;
             espeak-ar) args+=(--tts espeak --voice ar) ;;
+            heygen-fouad) args+=(--tts heygen --voice Fouad) ;;
             edge-backup) args+=(--tts edge --voice "$EDGE_VOICE") ;;
           esac
           if [[ "$CAPTIONS" != true ]]; then args+=(--no-captions); fi
