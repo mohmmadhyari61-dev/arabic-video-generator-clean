@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from .neural_speech import Audar, PORTABLE_ENGINES, Silma
+from .heygen_voice import HeyGenFouad
 from .pronunciation import chunks, spoken_text
 
 
@@ -38,6 +39,10 @@ class Speaker:
                 subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(raw),
                                 "-af", f"atempo={rate:.2f}", "-ar", "24000", "-ac", "1",
                                 str(temporary)], check=True)
+            elif self.backend == "heygen":
+                if self.engine is None:
+                    self.engine = HeyGenFouad()
+                self.engine.synthesize(text, temporary, speed=rate)
             elif self.backend == "piper":
                 if self.engine is None:
                     from piper import PiperVoice
